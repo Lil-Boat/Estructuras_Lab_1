@@ -17,11 +17,20 @@ python pruebas.py       # suite de pruebas lógicas
 python pruebas_main.py  # pruebas de integración del menú (entrada simulada)
 ```
 
-> **Importante**: el menú lee del **teclado**. Si se ejecuta con la entrada
-> redirigida (por ejemplo `dir | python main.py` o un runner sin consola), el
-> programa lo detecta, avisa con un mensaje claro y se cierra, en lugar de
-> "autocompletar" los campos con datos de la tubería. Para pruebas automáticas
-> por tubería use `$env:TICKET_UNA_PIPE = '1'` antes de ejecutar.
+> **Importante**: el menú lee del **teclado**. El programa hace una doble
+> verificación al iniciar:
+> 1. Si la entrada está **redirigida** (tubería, runner sin consola) avisa y se
+>    cierra, en lugar de "autocompletar" los campos con basura.
+> 2. Si la terminal es interactiva pero **ya tenía texto cargado** (p. ej. un
+>    *Dedicated Terminal* de VS Code reutilizado que dejó el comando anterior
+>    en el buffer) avisa y se cierra.
+>
+> La solución en VS Code es cerrar esa terminal (ícono de la **papelera**),
+> abrir una nueva y volver a ejecutar. En la parte de arriba de la pantalla se
+> muestra el **build** del programa (p. ej. `build 2026-11-08`) para confirmar
+> que se ejecuta la versión más reciente.
+>
+> Para pruebas automáticas por tubería use `$env:TICKET_UNA_PIPE = '1'`.
 
 ## Estructura del proyecto
 
@@ -45,6 +54,11 @@ python pruebas_main.py  # pruebas de integración del menú (entrada simulada)
 5. Si la cola de prioridad está **vacía**, se atiende solo a la regular.
 6. Al llegar a **0** entradas → mensaje de **SOLD OUT** y se **vacían ambas filas**.
    El sistema jamás vende una entrada "-1".
+7. **Reservas por comprador**: al registrarse, el comprador elige cuántas
+   entradas reservar (**máx. 5 por usuario**). El contador baja **de inmediato**
+   al reservar (el cupo queda apartado). Cuando el vendedor atiende, se
+   entregan las entradas que ese comprador ya tenía reservadas, sin volver a
+   descontar.
 
 ## Criterios de la competencia que se cumplen
 
@@ -102,14 +116,17 @@ vendedor** con las opciones originales:
 
 ### Flujo del Comprador
 
-El comprador puede registrarse en la fila (nombre, cédula y categoría) y
-consultar el estado de las filas:
+El comprador puede **registrarse reservando entradas** (nombre, cédula,
+categoría y **cantidad: 1 a 5 entradas**) y consultar el estado de las filas:
 
 ```
-1. Registrarme en la fila
+1. Registrarme en la fila         <- elige cuántas entradas reservar (máx. 5)
 2. Mostrar estado de las filas
 3. Volver a la selección de rol
 ```
+
+Al reservar, el contador de entradas disponibles baja de inmediato con la
+cantidad elegida.
 
 ## Complejidad (con nodos enlazados)
 

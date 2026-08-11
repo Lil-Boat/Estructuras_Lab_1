@@ -9,6 +9,10 @@ Ejecutar:  python main.py
 import os
 import sys
 
+# Build del programa: se muestra al iniciar para verificar que se ejecuta la
+# versión más reciente (si la consola muestra otra cosa, el archivo es viejo).
+BUILD = "build 2026-11-08"
+
 # Asegura que la consola (incluso redirigida a un pipe) nunca falle al
 # imprimir acentos o símbolos -> clave para el criterio "Cero Caídas".
 for _stream in (sys.stdout, sys.stderr):
@@ -58,33 +62,75 @@ def leer_cedula(mensaje):
         print("  [!] La cédula debe contener solo números (mínimo 5 dígitos).")
 
 
-def _verificar_terminal():
-    """Detecta si el programa tiene una terminal interactiva real.
+def _hay_entrada_pendiente():
+    """Detecta si stdin ya tiene datos 'tipeados' antes de que el usuario escriba.
 
-    Si se ejecuta con stdin redirigido (tubería, archivo, runner sin consola),
-    input() NO espera al teclado: lee basura de la tubería y el menú se
-    "autocompleta" solo (p. ej. rellena el nombre con la ruta del proyecto).
-    En ese caso se avisa y se sale con un error claro en vez de corromper datos.
-
-    Excepción: con la variable de entorno TICKET_UNA_PIPE=1 se permite el modo
-    por tubería, pensado para pruebas automáticas.
+    En una terminal recién abierta el teclado está vacío al iniciar el programa.
+    Si ya hay datos de entrada es porque algo más que el teclado alimenta el
+    stdin: una tubería/redirección, o una terminal reutilizada que dejó el
+    comando anterior en el buffer (caso típico del 'Run Python File in
+    Dedicated Terminal' de VS Code). En ese caso input() consumiría ESA basura
+    en lugar de esperar al usuario.
     """
-    if sys.stdin.isatty():
-        return True
+    if sys.platform == "win32":
+        try:
+            import msvcrt
+            return msvcrt.kbhit()
+        except Exception:
+            return False
+    try:
+        import select
+        return bool(select.select([sys.stdin], [], [], 0)[0])
+    except Exception:
+        return False
+
+
+def _verificar_terminal():
+    """Detecta si el programa tiene una terminal interactiva REAL y limpia.
+
+    1. Modo explícito para pruebas automáticas por tubería (TICKET_UNA_PIPE=1).
+    2. stdin redirigido (tubería, archivo, runner sin consola): input() NO
+       espera al teclado y autocompleta los campos con basura -> se avisa.
+    3. stdin interactivo pero con texto ya cargado en el buffer (terminal
+       reutilizada, p. ej. 'Dedicated Terminal' de VS Code) -> se avisa.
+
+    En ambos casos anómalos se sale con un error claro en vez de corromper datos.
+    """
+    ancho = 58
     if os.environ.get("TICKET_UNA_PIPE") == "1":
         return True
-    ancho = 58
-    print("=" * ancho)
-    print("  [!] No se detectó una terminal interactiva.")
-    print()
-    print("      Este programa lee del teclado y NO debe recibir datos")
-    print("      por tubería ni redirección. Ejecútelo directamente:")
-    print()
-    print("          python main.py")
-    print()
-    print("      (Para pruebas automáticas:  $env:TICKET_UNA_PIPE='1')")
-    print("=" * ancho)
-    return False
+
+    if not sys.stdin.isatty():
+        print("=" * ancho)
+        print("  [!] No se detectó una terminal interactiva.")
+        print()
+        print("      Este programa lee del teclado y NO debe recibir datos")
+        print("      por tubería ni redirección. Ejecútelo directamente:")
+        print()
+        print("          python main.py")
+        print()
+        print("      (Para pruebas automáticas:  $env:TICKET_UNA_PIPE='1')")
+        print("=" * ancho)
+        return False
+
+    if _hay_entrada_pendiente():
+        print("=" * ancho)
+        print("  [!] Se detectó que el teclado ya tenía texto cargado.")
+        print()
+        print("      Esto pasa al reutilizar una terminal que dejó el comando")
+        print("      anterior en el buffer (p. ej. 'Run Python File in")
+        print("      Dedicated Terminal' de VS Code) o al redirigir la entrada.")
+        print()
+        print("      Solución: cierre ESA terminal (ícono de la papelera) y")
+        print("      ejecute en una terminal recién abierta:")
+        print()
+        print("          python main.py")
+        print()
+        print("      (o borre lo escrito, limpie con 'cls' y vuelva a ejecutar)")
+        print("=" * ancho)
+        return False
+
+    return True
 
 
 def _bienvenida(sistema):
@@ -92,6 +138,7 @@ def _bienvenida(sistema):
     print("=" * ancho)
     print("  TICKET UNA - Sistema de Boletaje de Alta Demanda")
     print(f"  Concierto de la Década | {sistema.total_entradas} entradas disponibles")
+    print(f"  {BUILD}")
     print("=" * ancho)
 
 
@@ -109,7 +156,10 @@ def _mostrar_menu_vendedor(sistema):
 
 
 def registrar_comprador(sistema):
-    print("\n--- Registrar comprador en fila ---")
+    print("\n--- Registrar / reservar comprador en fila ---")
+    if sistema.sold_out:
+        print("  [!] SOLD OUT: la venta está cerrada, no quedan entradas.")
+        return
     nombre = leer_texto_no_vacio("  Nombre completo: ")
     cedula = leer_cedula("  Cédula: ")
     print("  Categoría del tiquete:")
@@ -118,14 +168,22 @@ def registrar_comprador(sistema):
     print("    3. Preferencial (Ley 7600: adulto mayor, embarazada, discapacidad)")
     opcion = leer_entero("  Seleccione [1-3]: ", 1, 3)
     categoria = _CATEGORIAS[opcion - 1]
-    comprador = Comprador(nombre, cedula, categoria)
+    maximo = min(Comprador.MAX_ENTRADAS_POR_USUARIO, sistema.entradas_restantes)
+    print(f"  ¿Cuántas entradas desea reservar? (máx. {maximo})")
+    cantidad = leer_entero(f"  Cantidad [1-{maximo}]: ", 1, maximo)
+    comprador = Comprador(nombre, cedula, categoria, cantidad=cantidad)
     try:
-        sistema.registrar_comprador(comprador)
+        resultado = sistema.registrar_comprador(comprador)
     except ValueError as error:
         print(f"  [!] {error}")
         return
+    if resultado["tipo"] == "ultimas_reservadas":
+        print(f"  [+] {comprador.nombre} reservó las ÚLTIMAS {cantidad} entrada(s). "
+              "Se detiene la venta: SOLD OUT.")
+        return
     fila = "Prioridad" if comprador.es_prioritario else "Regular"
-    print(f"  [+] {comprador.nombre} encolado en la Fila {fila} (categoría: {categoria}).")
+    print(f"  [+] {comprador.nombre} reservó {cantidad} entrada(s) y quedó en la "
+          f"Fila {fila}. Entradas restantes: {resultado['restantes']}.")
 
 
 def atender_siguiente(sistema):
@@ -134,14 +192,15 @@ def atender_siguiente(sistema):
     tipo = resultado["tipo"]
     if tipo == "sin_clientes":
         print("  Las filas están vacías: no hay compradores que atender.")
-    elif tipo == "venta":
+    elif tipo == "entrega":
         c = resultado["comprador"]
-        print(f"  Entrada vendida a {c.nombre} - Categoría: {c.categoria}. "
-              f"Entradas restantes: {resultado['restantes']}.")
-    elif tipo == "ultima_entrada":
-        c = resultado["comprador"]
-        print(f"  Entrada vendida a {c.nombre} - Categoría: {c.categoria}. Entradas restantes: 0.")
-        print("  [!!] SOLD OUT - Todas las entradas se agotaron. Las filas se vaciaron.")
+        n = c.cantidad
+        if n == 1:
+            print(f"  Entrada vendida a {c.nombre} - Categoría: {c.categoria}. "
+                  f"Entradas restantes: {resultado['restantes']}.")
+        else:
+            print(f"  {n} entradas vendidas a {c.nombre} - Categoría: {c.categoria}. "
+                  f"Entradas restantes: {resultado['restantes']}.")
     elif tipo == "sold_out":
         print("  [!] SOLD OUT - La venta está cerrada: no quedan entradas.")
 

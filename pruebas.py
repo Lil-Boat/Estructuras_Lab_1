@@ -97,33 +97,77 @@ def test_despacho_solo_regular_cuando_prioridad_vacia():
     print("OK  test_despacho_solo_regular_cuando_prioridad_vacia")
 
 
-def test_sold_out_vende_negativo_jamas():
-    """SOLD OUT en 0, se vacían las colas y jamás se vende una entrada -1."""
+def test_sold_out_al_reservar_no_baja_de_cero():
+    """Reservar agota el contador exactamente en 0, vacía colas y jamás baja de 0."""
     sistema = SistemaBoletaje(total_entradas=3)
-    for i in range(10):
-        sistema.registrar_comprador(Comprador(f"C{i}", f"{i:08d}", Comprador.REGULAR))
 
-    res1 = sistema.atender_siguiente()
-    res2 = sistema.atender_siguiente()
-    res3 = sistema.atender_siguiente()
-    assert res1["tipo"] == "venta" and res1["restantes"] == 2
-    assert res2["tipo"] == "venta" and res2["restantes"] == 1
-    assert res3["tipo"] == "ultima_entrada" and res3["sold_out"] is True
+    # Reserva 2 -> queda 1
+    res1 = sistema.registrar_comprador(Comprador("Ana", "11111111", Comprador.REGULAR, cantidad=2))
+    assert res1["tipo"] == "reserva" and res1["restantes"] == 1
 
-    # Ya no vende más (nunca -1) y las colas quedaron vacías:
-    res4 = sistema.atender_siguiente()
-    assert res4["tipo"] == "sold_out"
-    assert sistema.entradas_restantes == 0, "Las entradas no pueden bajar de 0"
+    # Reserva 1 -> llega a 0 -> SOLD OUT y se vacían las colas
+    res2 = sistema.registrar_comprador(Comprador("Luis", "22222222", Comprador.VIP, cantidad=1))
+    assert res2["tipo"] == "ultimas_reservadas" and res2["sold_out"] is True
+    assert sistema.entradas_restantes == 0
     assert sistema.cola_regular.esta_vacia()
     assert sistema.cola_prioridad.esta_vacia()
 
-    # Registrar tras SOLD OUT debe rechazarse:
+    # Ya no se atiende ni se reserva más (jamás queda -1):
+    assert sistema.atender_siguiente()["tipo"] == "sold_out"
     try:
         sistema.registrar_comprador(Comprador("X", "99999999", Comprador.REGULAR))
         assert False, "No debía permitir registrar después de SOLD OUT"
     except ValueError:
         pass
-    print("OK  test_sold_out_vende_negativo_jamas")
+    assert sistema.entradas_restantes == 0, "Las entradas no pueden bajar de 0"
+    print("OK  test_sold_out_al_reservar_no_baja_de_cero")
+
+
+def test_limite_5_entradas_por_usuario():
+    """No se puede reservar más de 5 entradas por usuario."""
+    sistema = SistemaBoletaje(total_entradas=50)
+
+    # 6 entradas: rechazado
+    try:
+        sistema.registrar_comprador(Comprador("Karla", "12345678", Comprador.REGULAR, cantidad=6))
+        assert False, "Debe rechazar más de 5 entradas"
+    except ValueError:
+        pass
+
+    # 0 o negativo: rechazado
+    for mala in (0, -3):
+        try:
+            sistema.registrar_comprador(Comprador("Pablo", "12345678", Comprador.REGULAR, cantidad=mala))
+            assert False, f"Debe rechazar cantidad {mala}"
+        except ValueError:
+            pass
+
+    # Más entradas de las disponibles: rechazado
+    pequeno = SistemaBoletaje(total_entradas=3)
+    try:
+        pequeno.registrar_comprador(Comprador("Sofía", "12345678", Comprador.REGULAR, cantidad=4))
+        assert False, "Debe rechazar reservar más de lo disponible"
+    except ValueError:
+        pass
+
+    # Exactamente 5: permitido
+    res = sistema.registrar_comprador(Comprador("Ana", "87654321", Comprador.REGULAR, cantidad=5))
+    assert res["restantes"] == 50 - 5
+    print("OK  test_limite_5_entradas_por_usuario")
+
+
+def test_atencion_entrega_cantidad_reservada():
+    """Atender NO vuelve a descontar: entrega lo que ya se reservó."""
+    sistema = SistemaBoletaje(total_entradas=10)
+    sistema.registrar_comprador(Comprador("Mía", "11111111", Comprador.PREFERENCIAL, cantidad=3))
+    assert sistema.entradas_restantes == 7  # el contador bajó al reservar
+
+    resultado = sistema.atender_siguiente()
+    assert resultado["tipo"] == "entrega"
+    assert resultado["comprador"].cantidad == 3
+    assert sistema.entradas_restantes == 7  # sin doble descuento
+    assert sistema.vendidas_por_categoria[Comprador.PREFERENCIAL] == 3
+    print("OK  test_atencion_entrega_cantidad_reservada")
 
 
 def test_filas_vacias_sin_clientes():

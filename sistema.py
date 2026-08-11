@@ -39,7 +39,8 @@ def _generar_comprador_aleatorio():
         (Comprador.REGULAR, Comprador.VIP, Comprador.PREFERENCIAL),
         weights=(50, 30, 20),
     )[0]
-    return Comprador(nombre, cedula, categoria)
+    cantidad = random.randint(1, Comprador.MAX_ENTRADAS_POR_USUARIO)
+    return Comprador(nombre, cedula, categoria, cantidad=cantidad)
 
 
 class SistemaBoletaje:
@@ -54,6 +55,7 @@ class SistemaBoletaje:
         self.total_entradas = total_entradas
         self.entradas_restantes = total_entradas
         self.vendidas_por_categoria = Counter()
+        self.reservadas_por_categoria = Counter()
         self.sold_out = False
         self.vendedor_registrado = None
         # Contador interno de la regla 3:1.
@@ -77,26 +79,55 @@ class SistemaBoletaje:
         return None
 
     # ------------------------------------------------------------------
-    # Registro de compradores
+    # Registro de compradores (reserva de entradas)
     # ------------------------------------------------------------------
     def registrar_comprador(self, comprador):
-        """Encola a un comprador en la fila que le corresponde por categoría."""
+        """Reserva entradas para un comprador y lo encola en su fila.
+
+        Al registrar, se descuentan de golpe las entradas reservadas
+        (máx. 5 por usuario). Devuelve un dict con el resultado y lanza
+        ValueError si la reserva no es válida o la venta está cerrada.
+        """
         if self.sold_out:
             raise ValueError("SOLD OUT: las entradas están agotadas, venta cerrada.")
+
+        cantidad = comprador.cantidad
+        maximo = Comprador.MAX_ENTRADAS_POR_USUARIO
+        if not isinstance(cantidad, int) or cantidad < 1:
+            raise ValueError(f"La cantidad debe ser un entero entre 1 y {maximo}.")
+        if cantidad > maximo:
+            raise ValueError(f"Límite de {maximo} entradas por usuario.")
+        if cantidad > self.entradas_restantes:
+            raise ValueError(
+                f"Solo quedan {self.entradas_restantes} entrada(s) disponibles "
+                f"y pediste {cantidad}.")
+
         if comprador.es_prioritario:
             self.cola_prioridad.encolar(comprador, comprador.prioridad)
         else:
             self.cola_regular.encolar(comprador)
 
+        self.entradas_restantes -= cantidad
+        self.reservadas_por_categoria[comprador.categoria] += cantidad
+
+        if self.entradas_restantes == 0:
+            self.sold_out = True
+            self._vaciar_colas()
+            return {"tipo": "ultimas_reservadas", "cantidad": cantidad,
+                    "restantes": 0, "sold_out": True}
+
+        return {"tipo": "reserva", "cantidad": cantidad,
+                "restantes": self.entradas_restantes, "sold_out": False}
+
     # ------------------------------------------------------------------
     # Despacho (requerimiento #2)
     # ------------------------------------------------------------------
     def atender_siguiente(self):
-        """Extrae al siguiente comprador (regla 3:1) y descuenta una entrada.
+        """Entrega al siguiente comprador (regla 3:1) sus entradas reservadas.
 
-        Secuencia de despacho: P P P R P P P R ...
+        Las entradas ya se reservaron (y descontaron) en el registro; aquí solo
+        se despacha/entrega. Secuencia de despacho: P P P R P P P R ...
         Si la cola de prioridad está vacía, se atiende solo a la regular.
-        Al llegar a 0 entradas se emite SOLD OUT y se vacían las colas.
         """
         if self.sold_out:
             return self._resultado("sold_out")
@@ -105,15 +136,8 @@ class SistemaBoletaje:
         if comprador is None:
             return self._resultado("sin_clientes")
 
-        self.entradas_restantes -= 1
-        self.vendidas_por_categoria[comprador.categoria] += 1
-
-        if self.entradas_restantes == 0:
-            self.sold_out = True
-            self._vaciar_colas()
-            return self._resultado("ultima_entrada", comprador)
-
-        return self._resultado("venta", comprador)
+        self.vendidas_por_categoria[comprador.categoria] += comprador.cantidad
+        return self._resultado("entrega", comprador)
 
     def _siguiente_por_algoritmo(self):
         """Decide y desencola al siguiente comprador (None si todo está vacío)."""

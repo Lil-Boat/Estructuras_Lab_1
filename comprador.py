@@ -17,6 +17,7 @@ class Comprador:
     REGULAR = "Regular"
     VIP = "VIP"
     PREFERENCIAL = "Preferencial (Ley 7600)"
+    MAX_ENTRADAS_POR_USUARIO = 5
 
     # Número menor = prioridad mayor. Regular no tiene prioridad (None).
     _PRIORIDAD_POR_CATEGORIA = {
@@ -28,6 +29,7 @@ class Comprador:
     nombre: str
     cedula: str
     categoria: str
+    cantidad: int = 1
 
     @property
     def prioridad(self):
@@ -40,4 +42,7 @@ class Comprador:
         return self.prioridad is not None
 
     def __str__(self):
-        return f"{self.nombre} (Céd. {self.cedula}) | {self.categoria}"
+        base = f"{self.nombre} (Céd. {self.cedula}) | {self.categoria}"
+        if self.cantidad and self.cantidad > 1:
+            base += f" | x{self.cantidad}"
+        return base

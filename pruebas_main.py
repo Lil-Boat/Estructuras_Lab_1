@@ -154,29 +154,68 @@ def test_registrar_vendedor_ya_existente():
 
 
 def test_verificar_terminal():
-    """La guardia de terminal interactiva se comporta bien en ambos casos."""
+    """La guardia cubre: tubería, tubería+flag, teclado limpio y buffer sucio."""
     original_stdin = sys.stdin
+    original_pendiente = main_mod._hay_entrada_pendiente
 
     no_tty = type("FakeStdin", (), {"isatty": lambda self: False})()
     es_tty = type("FakeTty", (), {"isatty": lambda self: True})()
 
     try:
-        # stdin NO interactivo y sin flag -> se niega a ejecutarse
+        # stdin NO interactivo y sin flag -> se niega
         sys.stdin = no_tty
+        main_mod._hay_entrada_pendiente = lambda: False
         os.environ.pop("TICKET_UNA_PIPE", None)
         assert main_mod._verificar_terminal() is False
 
-        # stdin NO interactivo pero con flag de pruebas -> permite correr
+        # stdin NO interactivo pero con flag de pruebas -> permite
         os.environ["TICKET_UNA_PIPE"] = "1"
         assert main_mod._verificar_terminal() is True
         del os.environ["TICKET_UNA_PIPE"]
 
-        # stdin interactivo -> siempre permite (es el caso normal del teclado)
+        # stdin interactivo y buffer limpio -> permite (teclado normal)
         sys.stdin = es_tty
         assert main_mod._verificar_terminal() is True
+
+        # stdin interactivo pero con texto ya cargado -> se niega
+        main_mod._hay_entrada_pendiente = lambda: True
+        assert main_mod._verificar_terminal() is False
+
+        # buffer sucio pero con flag de pruebas -> permite
+        os.environ["TICKET_UNA_PIPE"] = "1"
+        assert main_mod._verificar_terminal() is True
+        del os.environ["TICKET_UNA_PIPE"]
     finally:
         sys.stdin = original_stdin
+        main_mod._hay_entrada_pendiente = original_pendiente
     print("OK  test_verificar_terminal")
+
+
+def test_registrar_comprador_con_cantidad():
+    """El comprador elige cuántas entradas reservar y el contador baja."""
+    sistema = SistemaBoletaje()
+    respuestas = [
+        "1",              # menú comprador: registrarme en la fila
+        "Ana Pérez",      # nombre
+        "987654321",      # cédula
+        "3",              # categoría: Preferencial (Ley 7600)
+        "3",              # cantidad: 3 entradas
+        "",               # [ENTER]
+        "2",              # menú comprador: estado de filas
+        "",               # [ENTER]
+        "3",              # menú comprador: volver a la selección de rol
+    ]
+    simulador = SimuladorEntrada(respuestas)
+    simulador.entrar()
+    try:
+        main_mod.menu_comprador(sistema)
+    finally:
+        simulador.salir()
+    assert sistema.entradas_restantes == 500 - 3
+    assert len(sistema.cola_prioridad) == 1
+    assert sistema.cola_prioridad.ver_frente().cantidad == 3
+    assert not simulador.pendientes
+    print("OK  test_registrar_comprador_con_cantidad")
 
 
 def main():
